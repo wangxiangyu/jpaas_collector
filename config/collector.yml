@@ -1,0 +1,5 @@
+logging:
+  file: /home/work/jpaas_collector/log/collector.log
+
+message_bus_uri: nats://n_user:n_passwd@10.36.166.28:8444
+

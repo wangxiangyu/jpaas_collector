@@ -1,0 +1,16 @@
+#!/usr/bin/env ruby
+require "rubygems"
+require "eventmachine"
+
+$:.unshift(File.expand_path("../lib", File.dirname(__FILE__)))
+
+require "collector"
+
+config_file = ENV["CONFIG_FILE"] || File.expand_path("../config/collector.yml", File.dirname(__FILE__))
+
+collector=Collector::Collector.new(config_file)
+collector.setup_nats
+
+EM.run do
+    collector.run
+end
