@@ -2,6 +2,7 @@ require "config"
 require "nats"
 require 'socket'
 require "logger"
+require "database"
 
 module Collector
     class Collector
@@ -10,8 +11,17 @@ module Collector
             @sids_dea_meta={}
             @sids_instance_resource={}
             @sids_instance_meta={}
-            @nats=nil
-            @local_ip=nil
+            configure_db
+            setup_log
+            setup_nats
+        end
+        attr_reader :config
+        attr_reader :nats
+        attr_reader :logger
+        def configure_db
+            #CollectorDb.configure(@config)
+        end
+        def setup_log
             #@logger=Logger.new(config['logging']['file'])
             @logger=Logger.new(STDOUT)
             @logger.datetime_format = "%Y-%m-%d %H:%M:%S"
@@ -20,9 +30,6 @@ module Collector
             end
             @logger.level = Logger::DEBUG
         end
-        attr_reader :config
-        attr_reader :nats
-        attr_reader :logger
         def setup_nats
             @nats = Nats.new(self,config['message_bus_uri'])
         end
@@ -39,7 +46,7 @@ module Collector
             @local_ip||IPSocket.getaddress(Socket.gethostname)
         end
         def register_to_master
-            EM::PeriodicTimer.new(1) do  
+            EM::PeriodicTimer.new(3) do  
                 logger.debug("register to collector master")
                 data={:ip=>get_ip}
                 nats.publish("collector_register",data)
@@ -67,6 +74,7 @@ module Collector
             collect_instance_meta(start_index,end_index)
             collect_instance_resource(start_index,end_index)
             collect_dea_meta(start_index,end_index)
+            collect_instance_existence_register(start_index,end_index)
         end
 
         def collect_instance_meta(start_index,end_index)
@@ -84,7 +92,7 @@ module Collector
             (start_index..end_index).each do |i|
                 index=i%256
                 logger.debug("sub instance_resource #{index}")
-                sid=nats.subscribe("dea.#{index}.instance.resource") do |message|
+                sid=nats.subscribe("dea.#{index}.usagedata") do |message|
                     process_instance_resource(message)
                 end
                 @sids_instance_resource[index]=sid
@@ -102,23 +110,94 @@ module Collector
             end
         end
 
+        def collect_instance_existence_register(start_index,end_index)
+            (start_index..end_index).each do |i|
+                index=i%256
+                logger.debug("sub instance existence register #{index}")
+                sid=nats.subscribe("dea.#{index}.check") do |message|
+                    process_instance_existence_register(message)
+                end
+                @sids_dea_meta[index]=sid
+            end
+        end
+
         def register_task
-            EM::PeriodicTimer.new(2) do
+            EM::PeriodicTimer.new(5) do
                 index=@sids_dea_meta.keys
                 logger.debug("task register #{index}")
                 nats.publish("task_register",{:index=>index})
             end
         end
         def process_instance_meta(message)
-            p message
+            begin
+                instance_meta=message.data
+                instance_info={}
+                instance_info['state']=instance_meta['state']
+                instance_info['time']=Time.now.to_i
+                instance_info['host']="0.0.0.0"
+                instance_info['space']=instance_meta['tags']['space_name']
+                instance_info['organization']=instance_meta['tags']['org_name']
+                instance_info['bns_node']=instance_meta['tags']['bns_node']
+                instance_info['app_name']=instance_meta['application_name']
+                instance_info['uris']=instance_meta['application_uris'].join(",")
+                instance_info['instance_index']=instance_meta['instance_index']
+                instance_info['cluster_num']="unknown"
+                instance_info['warden_handle']=instance_meta['warden_handle']
+                instance_info['warden_container_path']=instance_meta['warden_container_path']
+                instance_info['state_starting_timestamp']=instance_meta['state_starting_timestamp']
+                instance_info['port_info']=instance_meta['instance_meta']['prod_ports'].to_json.to_s
+                instance_info['noah_monitor_port']=instance_meta['noah_monitor_host_port']
+                instance_info['warden_host_ip']=instance_meta['warden_host_ip']
+                instance_info['instance_id']=instance_meta['instance_id']
+                instance_info['disk_quota']=instance_meta['limits']['disk']
+                instance_info['mem_quota']=instance_meta['limits']['mem']
+                instance_info['fds_quota']=instance_meta['limits']['fds']
+                InstanceStatus.where(
+                    :instance_id=>instance_info['instance_id']
+                ).first_or_create.update_attributes(instance_info)
+            rescue => e
+                logger.error("Error in process instance meta:#{e.message} #{e.backtrace}")
+            end
         end
         
         def process_instance_resource(message)
-            p message
+            begin
+              instance_resource=message.data
+              instance_info={}
+              instance_info['instance_id']=instance_resource["instance_id"]
+              instance_info['time']=Time.now.to_i
+              instance_info['cpu_usage']=instance_resource["usage"]["cpu"]
+              instance_info['mem_usage']=instance_resource["usage"]["mem"]
+              instance_info['fds_usage']=instance_resource["usage"]["fds"]
+              InstanceStatus.where(
+                  :instance_id=>instance_info['instance_id']
+              ).first_or_create.update_attributes(instance_info)
+            rescue => e
+                logger.error("Error in process instance resource:#{e.message} #{e.backtrace}")
+            end
         end
 
         def process_dea_meta(message) 
-            p message
+            begin 
+                dea=message.data
+                dea_info={}
+                dea_info["uuid"]=dea["uuid"]
+                dea_info["ip"]=dea["ip"]
+                dea_info["cluster_num"]="unknown"
+                dea_info["time"]=Time.now.to_i
+                DeaList.where(
+                    :uuid=>dea_info["uuid"]
+                ).first_or_create.update_attributes(dea_info)
+            rescue => e
+                logger.error("Error in process dea meta:#{e.message} #{e.backtrace}")
+            end
+        end
+
+        def process_instance_existence_register(message)
+            begin
+            rescue => e
+                logger.error("Error in process instance existence register:#{e.message} #{e.backtrace}")
+            end
         end
     end
 end

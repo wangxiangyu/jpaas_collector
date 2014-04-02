@@ -4,7 +4,7 @@ require "yaml"
 module Collector
     class Config
         attr_reader :config
-        DEFAULT_CONFIG = {}
+        DEFAULT_CONFIG = {"mysql"=>{"port"=>3306}}
         def self.schema
             ::Membrane::SchemaParser.parse do
             {
@@ -12,11 +12,19 @@ module Collector
                "logging" => {
                   "file" => String,
               },
+               "mysql" => {
+                  "host" => String,
+                  "username" => String,
+                  "password" => String,
+                  "db_name" => String,
+                  "port" => Integer
+              },
             }
             end
         end
         def initialize(file_path)
             @config = DEFAULT_CONFIG.merge(YAML.load_file(file_path))
+            @config["mysql"]["port"]||=3306
             validate
         end
         def validate
