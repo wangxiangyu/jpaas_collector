@@ -1,5 +1,10 @@
 logging:
   file: /home/work/jpaas_collector/log/collector.log
 
-message_bus_uri: nats://jpaas_online:anBhYXNfb25saW5l@10.36.166.48:4242
+message_bus_uri: nats://n_user:n_passwd@10.36.166.46:8446
+mysql:
+  host: 10.36.58.31
+  username: jpaas
+  password: mhxzkhl
+  db_name: jpaas
 

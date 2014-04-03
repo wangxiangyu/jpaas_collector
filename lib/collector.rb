@@ -11,16 +11,13 @@ module Collector
             @sids_dea_meta={}
             @sids_instance_resource={}
             @sids_instance_meta={}
-            configure_db
+            @sids_instance_existence_register={}
             setup_log
             setup_nats
         end
         attr_reader :config
         attr_reader :nats
         attr_reader :logger
-        def configure_db
-            #CollectorDb.configure(@config)
-        end
         def setup_log
             #@logger=Logger.new(config['logging']['file'])
             @logger=Logger.new(STDOUT)
@@ -38,6 +35,8 @@ module Collector
                 register_to_master
                 register_task
                 sub_task
+                remove_dead_instance
+                remove_dead_dea
             rescue => e
                 logger.error("Error in collector:#{e.message} #{e.backtrace}")
             end
@@ -45,28 +44,63 @@ module Collector
         def get_ip
             @local_ip||IPSocket.getaddress(Socket.gethostname)
         end
+        def remove_dead_instance
+            begin
+                EM::PeriodicTimer.new(5) do
+                    time_delete=Time.now.to_i-5
+                    InstanceStatus.where("time < #{time_delete}").destroy_all
+                end
+            rescue => e
+                logger.error("Error in remove dead instance:#{e.message} #{e.backtrace}")
+            end
+        end
+
+        def remove_dead_dea
+            begin
+                EM::PeriodicTimer.new(60) do
+                    time_delete=Time.now.to_i-60
+                    DeaList.where("time < #{time_delete}").destroy_all
+                end
+            rescue => e
+                logger.error("Error in remove dead instance:#{e.message} #{e.backtrace}")
+            end
+        end
         def register_to_master
-            EM::PeriodicTimer.new(3) do  
-                logger.debug("register to collector master")
-                data={:ip=>get_ip}
-                nats.publish("collector_register",data)
+            begin
+                EM::PeriodicTimer.new(3) do  
+                    logger.debug("register to collector master")
+                    data={:ip=>get_ip}
+                    nats.publish("collector_register",data)
+                end
+            rescue => e
+                logger.error("Error in register to master:#{e.message} #{e.backtrace}")
             end
         end
         def sub_task
-            nats.subscribe("collector_task_#{get_ip}") do |message|
-                logger.debug("get collector task")
-                clear_collect
-                collect(message)
+            begin
+                nats.subscribe("collector_task_#{get_ip}") do |message|
+                    logger.debug("get collector task")
+                    clear_collect
+                    collect(message)
+                end
+            rescue => e
+                logger.error("Error in sub task:#{e.message} #{e.backtrace}")
             end
         end
         def clear_collect
-            logger.debug("clear collector task")
-            @sids_dea_meta.each { |_, sid| nats.unsubscribe(sid) }
-            @sids_dea_meta={}
-            @sids_instance_resource.each { |_, sid| nats.unsubscribe(sid) }
-            @sids_instance_resource={}
-            @sids_instance_meta.each { |_, sid| nats.unsubscribe(sid) }
-            @sids_instance_meta={}
+            begin
+                logger.debug("clear collector task")
+                @sids_dea_meta.each { |_, sid| nats.unsubscribe(sid) }
+                @sids_dea_meta={}
+                @sids_instance_resource.each { |_, sid| nats.unsubscribe(sid) }
+                @sids_instance_resource={}
+                @sids_instance_meta.each { |_, sid| nats.unsubscribe(sid) }
+                @sids_instance_meta={}
+                @sids_instance_existence_register.each { |_, sid| nats.unsubscribe(sid) }
+                @sids_instance_existence_register={}
+            rescue => e
+                logger.error("Error in clear collect:#{e.message} #{e.backtrace}")
+            end
         end
         def collect(message) 
             start_index=message.data["start_index"]
@@ -78,54 +112,74 @@ module Collector
         end
 
         def collect_instance_meta(start_index,end_index)
-            (start_index..end_index).each do |i|
-                index=i%256
-                logger.debug("sub instance meta #{index}")
-                sid=nats.subscribe("dea.#{index}.metadata") do |message|
-                    process_instance_meta(message)
+            begin
+                (start_index..end_index).each do |i|
+                    index=i%256
+                    logger.debug("sub instance meta #{index}")
+                    sid=nats.subscribe("dea.#{index}.metadata") do |message|
+                        process_instance_meta(message)
+                    end
+                    @sids_instance_meta[index]=sid
                 end
-                @sids_instance_meta[index]=sid
+            rescue => e
+                logger.error("Error in collect instance meta:#{e.message} #{e.backtrace}")
             end
         end
 
         def collect_instance_resource(start_index,end_index)
-            (start_index..end_index).each do |i|
-                index=i%256
-                logger.debug("sub instance_resource #{index}")
-                sid=nats.subscribe("dea.#{index}.usagedata") do |message|
-                    process_instance_resource(message)
+            begin
+                (start_index..end_index).each do |i|
+                    index=i%256
+                    logger.debug("sub instance_resource #{index}")
+                    sid=nats.subscribe("dea.#{index}.usagedata") do |message|
+                        process_instance_resource(message)
+                    end
+                    @sids_instance_resource[index]=sid
                 end
-                @sids_instance_resource[index]=sid
+            rescue => e
+                logger.error("Error in collect instance meta:#{e.message} #{e.backtrace}")
             end
         end
 
         def collect_dea_meta(start_index,end_index)
-            (start_index..end_index).each do |i|
-                index=i%256
-                logger.debug("sub dea meta #{index}")
-                sid=nats.subscribe("dea.#{index}.nodedata") do |message|
-                    process_dea_meta(message)
+            begin
+                (start_index..end_index).each do |i|
+                    index=i%256
+                    logger.debug("sub dea meta #{index}")
+                    sid=nats.subscribe("dea.#{index}.nodedata") do |message|
+                        process_dea_meta(message)
+                    end
+                    @sids_dea_meta[index]=sid
                 end
-                @sids_dea_meta[index]=sid
+            rescue => e
+                logger.error("Error in collect instance meta:#{e.message} #{e.backtrace}")
             end
         end
 
         def collect_instance_existence_register(start_index,end_index)
-            (start_index..end_index).each do |i|
-                index=i%256
-                logger.debug("sub instance existence register #{index}")
-                sid=nats.subscribe("dea.#{index}.check") do |message|
-                    process_instance_existence_register(message)
+            begin
+                (start_index..end_index).each do |i|
+                    index=i%256
+                    logger.debug("sub instance existence register #{index}")
+                    sid=nats.subscribe("dea.#{index}.check") do |message|
+                        process_instance_existence_register(message)
+                    end
+                    @sids_instance_existence_register[index]=sid
                 end
-                @sids_dea_meta[index]=sid
+            rescue => e
+                logger.error("Error in collect instance existence register:#{e.message} #{e.backtrace}")
             end
         end
 
         def register_task
-            EM::PeriodicTimer.new(5) do
-                index=@sids_dea_meta.keys
-                logger.debug("task register #{index}")
-                nats.publish("task_register",{:index=>index})
+            begin
+                EM::PeriodicTimer.new(5) do
+                    index=@sids_dea_meta.keys
+                    logger.debug("task register #{index}")
+                    nats.publish("task_register",{:index=>index})
+                end
+            rescue => e
+                logger.error("Error in register task:#{e.message} #{e.backtrace}")
             end
         end
         def process_instance_meta(message)
@@ -195,6 +249,12 @@ module Collector
 
         def process_instance_existence_register(message)
             begin
+                instance_id=message.data["instance_id"]
+                if InstanceStatus.where(:instance_id=>instance_id).empty?
+                    message.respond({"status"=>"bad"})
+                else
+                    message.respond({"status"=>"ok"})
+                end
             rescue => e
                 logger.error("Error in process instance existence register:#{e.message} #{e.backtrace}")
             end

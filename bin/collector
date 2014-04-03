@@ -4,10 +4,12 @@ require "eventmachine"
 require "active_record"
 
 $:.unshift(File.expand_path("../lib", File.dirname(__FILE__)))
+config_file = ENV["CONFIG_FILE"] || File.expand_path("../config/collector.yml", File.dirname(__FILE__))
+require "database"
 
+Collector::CollectorDb.configure(config_file)
 require "collector"
 
-config_file = ENV["CONFIG_FILE"] || File.expand_path("../config/collector.yml", File.dirname(__FILE__))
 
 collector=Collector::Collector.new(config_file)
 
